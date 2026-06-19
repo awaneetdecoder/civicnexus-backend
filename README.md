@@ -1,132 +1,204 @@
-# SwachhDrishti — Backend API
+# SwachhDrishti — Spring Boot Backend
 
-![Java](https://img.shields.io/badge/Java-17-orange)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.14-brightgreen)
-![MySQL](https://img.shields.io/badge/MySQL-8.0-blue)
-![License](https://img.shields.io/badge/License-MIT-lightgrey)
+Spring Boot REST API for **SwachhDrishti** — a citizen garbage-reporting app. Handles JWT auth, report storage, and the AI severity/reward logic built on top of Google Cloud Vision API.
 
-REST API backend for **SwachhDrishti** — a smart citizen garbage
-reporting system built as a Final Year B.Tech CSE project.
-
-Citizens report garbage via a Flutter app. This backend handles
-authentication, stores reports, runs AI-based severity scoring
-through Google Cloud Vision API, awards reward coins, and serves
-a municipal hotspot map.
+**Flutter app repo:** [swachh-drishti](https://github.com/awaneetdecoder/swachh-drishti)
 
 ---
 
-## Features
+## What this does
 
-- JWT authentication (signup, login, token validation)
-- Garbage report submission with multipart image upload
-- Google Cloud Vision API integration for garbage classification
-- AI severity scoring (1–5) and garbage type detection
-- Reward coin system — verified reports earn Swachh-Coins
-- Municipal hotspot map using GPS clustering queries
-- Leaderboard ranked by coins earned
-- City-wide statistics dashboard
+Citizens upload a photo + GPS location of garbage. This API sends the photo to Google Cloud Vision API for label detection, then runs its own classification logic on those labels to determine garbage type and severity, stores the report, and awards coins — but only if the photo is confirmed to contain garbage.
+
+Google Cloud Vision API only returns raw labels and confidence scores (e.g. "waste", "plastic", "debris") — it does not classify garbage type or severity natively. That logic is custom, in `VisionService`.
+
+---
+
+## How severity scoring works
+
+1. Image saved to `uploads/` with a UUID filename
+2. Sent to Vision API Label Detection → returns labels + confidence
+3. Labels mapped to garbage type:
+   - plastic / bottle / bag → Plastic
+   - organic / food → Organic
+   - electronic / circuit → E-Waste
+   - else → Mixed
+4. Labels mapped to severity (1–5):
+   - litter → 1, debris → 2, garbage/pollution → 3, dump → 4, landfill → 5
+   - adjusted by label count and confidence
+5. Coins awarded by severity: 5 / 10 / 20 / 35 / 50 for levels 1–5
+6. **Reward gate:** coins are only awarded if `isGarbage` is true — meaning a garbage-related label was actually detected. This is what blocks fake or empty submissions from earning rewards.
 
 ---
 
 ## Tech stack
 
-| Layer | Technology |
-|-------|-----------|
-| Language | Java 17 |
-| Framework | Spring Boot 3.5.14 |
-| Database | MySQL 8.0 with Spring Data JPA |
-| Security | Spring Security + JWT (jjwt) |
-| AI | Google Cloud Vision API |
-| Build | Maven |
+| Technology | Purpose |
+|---|---|
+| Java 17, Spring Boot 3.5 | Core framework |
+| Spring Security + JJWT | JWT authentication |
+| Spring Data JPA / Hibernate | ORM |
+| MySQL 8 | Database |
+| Google Cloud Vision API | Label detection (severity logic is custom, built on top) |
+| BCrypt | Password hashing |
+| Local filesystem | Image storage (`uploads/` folder) |
 
 ---
 
-## Project structure
+## Architecture
+
+Strict 4-layer structure: **Controller → Service → Repository → Entity**
+
+- Controllers only read input, call one service method, and return — no logic
+- All business logic lives in the Service layer
+- Controllers never return Entity objects directly — always DTOs
+- `@Transactional` on service methods with multiple DB writes
 
 ```
-src/main/java/com/swachhdrishti/
-├── config/          # Security config, CORS
-├── controller/      # HTTP endpoints (AuthController, ReportController)
-├── service/         # Business logic (AuthService, ReportService, VisionService)
-├── repository/      # JPA repositories
-├── entity/          # JPA entities (User, Report)
-├── dto/             # Request/Response data transfer objects
-└── util/            # JwtUtil
+src/main/java/com/swachhdrishti/swachh_drishti/
+├── SwachhDrishtiApplication.java
+├── config/
+│   ├── SecurityConfig.java
+│   ├── CorsConfig.java
+│   └── JwtAuthFilter.java
+├── controller/
+│   ├── AuthController.java
+│   ├── ReportController.java
+│   └── UserController.java
+├── service/
+│   ├── AuthService.java
+│   ├── ReportService.java
+│   ├── VisionService.java       # Vision API call + severity/type logic
+│   └── UserDetailsServiceImpl.java
+├── repository/
+│   ├── UserRepository.java
+│   └── ReportRepository.java
+├── entity/
+│   ├── User.java
+│   └── Report.java
+├── dto/
+│   ├── AuthRequest.java
+│   ├── SignupRequest.java
+│   ├── AuthResponse.java
+│   ├── ReportResponse.java
+│   └── StatsResponse.java
+└── util/
+    └── JwtUtil.java
 ```
+
+---
+
+## API Endpoints
+
+### Public
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/auth/signup` | Register |
+| POST | `/api/auth/login` | Login → JWT |
+
+### Protected (JWT required)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/auth/me` | Current user details |
+| POST | `/api/reports` | Submit report (multipart: image + fields) |
+| GET | `/api/reports/myreports` | User's report history |
+| GET | `/api/reports/hotspots` | GPS-clustered report density (backend query only — no Flutter screen yet) |
+| GET | `/api/reports/stats` | User stats |
+| GET | `/api/users/leaderboard` | Leaderboard (endpoint exists, no real ranking logic finalized yet) |
+
+8 endpoints total. Single role — no admin or worker endpoints.
+
+---
+
+## Database schema
+
+**users**
+```
+id, name, email (unique), password (BCrypt),
+coins (default 0), total_reports (default 0),
+resolved_reports (default 0), created_at, updated_at
+```
+No role column — single-role app, every user is a citizen.
+
+**reports**
+```
+id, user_id (FK), address, description, image_url,
+latitude, longitude, severity_score (1-5), garbage_type,
+ai_confidence, ai_labels, status (default 'Pending'),
+coins_awarded, created_at, updated_at
+```
+
+---
+
+## Hotspot query
+
+```sql
+SELECT ROUND(latitude, 3) AS lat, ROUND(longitude, 3) AS lng, COUNT(*) AS report_count
+FROM reports
+GROUP BY ROUND(latitude, 3), ROUND(longitude, 3)
+HAVING COUNT(*) >= 2
+ORDER BY report_count DESC
+```
+
+This surfaces zones with repeated reports — it reflects historical report density, not a prediction of future garbage accumulation. There's no Flutter screen rendering this yet (see Roadmap).
 
 ---
 
 ## Getting started
 
 ### Prerequisites
-
-- Java 17+
-- MySQL 8.0 running locally
-- Maven 3.8+
-- Google Cloud account with Vision API enabled
+- Java 17, Maven
+- MySQL 8.0
+- A Google Cloud Vision API key
 
 ### Setup
 
-1. Clone the repository
-```bash
-git clone https://github.com/YOUR_USERNAME/swachh-drishti-backend.git
+```sh
+git clone https://github.com/awaneetdecoder/swachh-drishti-backend.git
 cd swachh-drishti-backend
 ```
 
-2. Create your local config file
-```bash
-cp src/main/resources/application.properties.example \
-   src/main/resources/application.properties
-```
-
-3. Edit `application.properties` and fill in:
-    - Your MySQL username and password
-    - A JWT secret (any 64+ character random string)
-    - Your Google Vision API key
-
-4. Create the database (Spring will auto-create the tables)
+Create the database:
 ```sql
 CREATE DATABASE swachhdrishti;
 ```
 
-5. Run the application
-```bash
-mvn spring-boot:run
+Configure `application.properties` (copy from `.example` if present) with your MySQL credentials, JWT secret, and Google Cloud Vision API key — never commit real credentials.
+
+Run:
+```sh
+./mvnw spring-boot:run
 ```
 
-The API will start on `http://localhost:8080`
+---
+
+## Honest current limitations
+
+- Solo personal project — not yet used or tested by anyone outside development.
+- Hotspot endpoint works, but no Flutter screen displays it yet.
+- Leaderboard endpoint exists but ranking logic isn't finalized.
+- No automated test suite yet.
+- Not deployed — runs locally only.
 
 ---
 
-## API endpoints
+## Roadmap
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | /api/auth/signup | No | Register new user |
-| POST | /api/auth/login | No | Login, returns JWT |
-| GET | /api/auth/me | Yes | Get current user profile |
-| POST | /api/reports | Yes | Submit garbage report with image |
-| GET | /api/reports/myreports | Yes | Get current user's reports |
-| GET | /api/reports/hotspots | Yes | Get GPS hotspot clusters |
-| GET | /api/reports/stats | Yes | Get city-wide statistics |
-| GET | /api/users/leaderboard | Yes | Get top users by coins |
-
----
-
-## Environment variables
-
-See `application.properties.example` for all required configuration.
-Never commit `application.properties` — it contains secrets.
+- [x] JWT auth, BCrypt
+- [x] Report submission + Vision API integration
+- [x] Custom severity/type mapping + reward gate
+- [ ] Finalize leaderboard ranking logic
+- [ ] Hotspot map screen in Flutter app
+- [ ] Get a small group of real users to test it
+- [ ] Automated test suite
 
 ---
 
 ## Author
 
-**YOUR_NAME** — B.Tech CSE, YOUR_COLLEGE_NAME (2025)
-
-- GitHub: awaneetdecoder(https://github.com/awaneetdecoder)
-- LinkedIn: Awaneet Mishra(https://www.linkedin.com/in/awaneet-mishra-6b6b952b0/)
-- Project demo: [YouTube link or APK link]
+**Awaneet Mishra** — [@awaneetdecoder](https://github.com/awaneetdecoder)
 
 ---
 
