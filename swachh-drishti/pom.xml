@@ -90,6 +90,20 @@
 			<version>0.11.5</version>
 			<scope>runtime</scope>
 		</dependency>
+		<!-- WHY OkHttp: to call Gemini API from backend -->
+		<!-- Spring's RestTemplate works too, but OkHttp is simpler for JSON calls -->
+		<dependency>
+			<groupId>com.squareup.okhttp3</groupId>
+			<artifactId>okhttp</artifactId>
+			<version>4.12.0</version>
+		</dependency>
+		<!-- WHY Jackson: already included via spring-web, but explicit for clarity -->
+		<!-- Used to parse Gemini's JSON response into Java objects -->
+
+		<!-- WHY Cloudinary: to store uploaded images in the cloud -->
+		<!-- Local file storage (app.upload.dir=uploads/) breaks on deploy -->
+		<!-- Every restart wipes local files on cloud platforms -->
+
 	</dependencies>
 
 	<build>
