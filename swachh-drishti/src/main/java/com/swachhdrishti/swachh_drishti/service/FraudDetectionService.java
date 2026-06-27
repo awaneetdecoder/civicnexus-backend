@@ -4,106 +4,97 @@ import com.swachhdrishti.swachh_drishti.entity.Issue;
 import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 
 @Service
 public class FraudDetectionService {
 
-    // Maximum distance (meters) resolver can be from reported location
     private static final double MAX_DISTANCE_METERS = 50.0;
-
-    // Resolution photo must be taken within this many minutes
     private static final long MAX_PHOTO_AGE_MINUTES = 30;
 
-    // WHY this method: before accepting any resolution,
-    // we validate three hard constraints.
-    // If ANY fails, the resolution is rejected automatically.
-    // This runs BEFORE Gemini comparison — no point calling Gemini
-    // if the basics already fail.
+    // Main validation method — called before accepting any resolution
+    // Throws RuntimeException if any check fails
+    // WHY throw instead of return boolean:
+    // Caller (IssueService) can catch the specific message and return it to Flutter
+    // Boolean would lose the reason for failure
     public void validateResolution(
-            Issue originalIssue,
+            double issueLatitude,
+            double issueLongitude,
+            java.time.LocalDateTime issueCreatedAt,
             double resolverLat,
             double resolverLng,
             Instant photoTakenAt) {
 
-        validatePhotoAge(photoTakenAt, originalIssue.getCreatedAt().toInstant(
-                java.time.ZoneOffset.UTC));
-
-        validateProximity(
-                originalIssue.getLatitude(), originalIssue.getLongitude(),
-                resolverLat, resolverLng);
+        validatePhotoAge(photoTakenAt, issueCreatedAt.toInstant(ZoneOffset.UTC));
+        validateProximity(issueLatitude, issueLongitude, resolverLat, resolverLng);
     }
 
-    // RULE 1: Photo must be recent
-    // WHY: prevents submitting old photos of clean locations
+    // RULE 1: Photo must be taken recently
+    // Prevents: submitting old gallery photos of clean roads
     private void validatePhotoAge(Instant photoTakenAt, Instant issueCreatedAt) {
         Instant now = Instant.now();
 
-        // Photo cannot be older than 30 minutes
         long minutesOld = Duration.between(photoTakenAt, now).toMinutes();
         if (minutesOld > MAX_PHOTO_AGE_MINUTES) {
             throw new RuntimeException(
                     "Resolution photo is " + minutesOld + " minutes old. " +
-                            "Photo must be taken within 30 minutes of submission.");
+                            "Must be taken within 30 minutes.");
         }
 
-        // Photo cannot predate the issue report
         if (photoTakenAt.isBefore(issueCreatedAt)) {
             throw new RuntimeException(
-                    "Resolution photo was taken before the issue was even reported. Fraud detected.");
+                    "Resolution photo was taken before the issue was reported.");
         }
     }
 
-    // RULE 2: Resolver must be physically near the issue
-    // WHY: prevents photographing a different clean road nearby
+    // RULE 2: Resolver must be physically at the location
+    // Prevents: photographing a different clean road 500m away
     private void validateProximity(
             double issueLat, double issueLng,
             double resolverLat, double resolverLng) {
 
-        double distanceMeters = haversineDistance(
+        double distance = haversineDistance(
                 issueLat, issueLng, resolverLat, resolverLng);
 
-        if (distanceMeters > MAX_DISTANCE_METERS) {
+        if (distance > MAX_DISTANCE_METERS) {
             throw new RuntimeException(
-                    "You are " + (int)distanceMeters + "m away from the reported location. " +
-                            "Must be within " + MAX_DISTANCE_METERS + "m.");
+                    "You are " + (int) distance + "m away from the issue location. " +
+                            "Must be within 50m.");
         }
     }
 
-    // Haversine formula — calculates real-world distance between two GPS coordinates
-    // WHY not simple Pythagoras: Earth is curved.
-    // At Delhi's latitude (~28°N), 1 degree longitude ≠ 1 degree latitude in meters.
-    // Haversine accounts for Earth's curvature — accurate within 0.5% for city distances.
-    private double haversineDistance(
+    // Haversine formula — real-world GPS distance calculation
+    // WHY not simple subtraction:
+    // Earth is curved. At Delhi's latitude, 1 degree of longitude
+    // is about 97km, but 1 degree of latitude is 111km.
+    // Haversine accounts for Earth's curvature — accurate to 0.5%
+    public double haversineDistance(
             double lat1, double lng1,
             double lat2, double lng2) {
 
         final double R = 6371000; // Earth radius in meters
-
         double dLat = Math.toRadians(lat2 - lat1);
         double dLng = Math.toRadians(lng2 - lng1);
 
-        double a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                        Math.sin(dLng/2) * Math.sin(dLng/2);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1))
+                * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLng / 2) * Math.sin(dLng / 2);
 
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-        return R * c; // Distance in meters
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 
-    // Displacement detection — called after resolution to check for fraud
-    // Returns true if pattern looks suspicious
-    // WHY separate method: this runs AFTER resolution is accepted,
-    // as a background check for the supervisor dashboard
+    // Displacement detection — checks if garbage was just moved nearby
+    // Called AFTER resolution is accepted, as background supervisor check
     public boolean isDisplacementSuspicious(
             double resolvedLat, double resolvedLng,
-            double newIssueLat, double newIssueLng,
-            String issueType) {
+            double newIssueLat, double newIssueLng) {
 
         double distance = haversineDistance(
                 resolvedLat, resolvedLng, newIssueLat, newIssueLng);
 
-        // Same issue type within 1km within 2 hours of resolution = suspicious
+        // Same type of issue within 1km = suspicious pattern
         return distance < 1000;
     }
 }

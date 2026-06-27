@@ -4,10 +4,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class SwachhDrishtiApplication {
-
+public class CivicNexusApplication {
 	public static void main(String[] args) {
-		SpringApplication.run(SwachhDrishtiApplication.class, args);
+		SpringApplication.run(CivicNexusApplication.class, args);
 	}
-
 }

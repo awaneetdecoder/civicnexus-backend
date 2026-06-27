@@ -8,11 +8,10 @@
 		<version>3.5.14</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-	<groupId>com.swachhdrishti</groupId>
-	<artifactId>swachh-drishti</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
+	<groupId>com.civicnexus</groupId>
+	<artifactId>civicnexus</artifactId>
+	<name>CivicNexus</name>
+	<description>AI-Powered Civic Issue Reporter</description>
 	<url/>
 	<licenses>
 		<license/>
