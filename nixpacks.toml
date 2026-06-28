@@ -1,9 +1,0 @@
-[phases.setup]
-nixPkgs = ['jdk17_headless', 'maven']
-
-[phases.build]
-cmds = ['./mvnw clean package -DskipTests']
-dependsOn = ['setup']
-
-[start]
-cmd = 'java -jar target/civicnexus-0.0.1-SNAPSHOT.jar'
