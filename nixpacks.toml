@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ['jdk17', 'maven']
+
+[phases.build]
+cmds = ['cd swachh-drishti && ./mvnw clean package -DskipTests']
+
+[start]
+cmd = 'cd swachh-drishti && java -jar swachh-drishti/target/swachh-drishti-0.0.1-SNAPSHOT.jar'
