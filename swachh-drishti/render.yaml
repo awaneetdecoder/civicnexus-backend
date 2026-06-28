@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: civicnexus-backend
+    runtime: java
+    buildCommand: cd swachh-drishti && ./mvnw clean package -DskipTests
+    startCommand: cd swachh-drishti && java -jar target/swachh-drishti-0.0.1-SNAPSHOT.jar
+    envVars:
+      - key: JAVA_VERSION
+        value: 21
